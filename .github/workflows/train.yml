@@ -21,7 +21,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Train model
+      - name: Check dataset
+        run: |
+          python -m darkimage.check_dataset
+
+      - name: Train Crystal Image
         run: |
           python -m darkimage.train
 
