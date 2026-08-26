@@ -28,14 +28,16 @@ jobs:
         run: |
           python -m darkimage.check_dataset
 
-      - name: Train Crystal Image
+      - name: Train Crystal Image v0.6
         run: |
           python -m darkimage.train
 
-      - name: Upload checkpoint
+      - name: Upload trained model and images
         uses: actions/upload-artifact@v4
         with:
-          name: crystal-image-checkpoint-${{ github.sha }}
+          name: crystal-image-v0.6-${{ github.sha }}
           path: |
             checkpoints/*.npz
             checkpoints/*.json
+            checkpoints/*.txt
+            samples/*.png

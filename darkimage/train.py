@@ -3,87 +3,89 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .dataset import Dataset
 from .model import DarkImage
 from .tokenizer import Tokenizer
 
 
 DATA_DIR = Path("data/train")
 CHECKPOINT_DIR = Path("checkpoints")
+SAMPLE_DIR = Path("samples")
 
-MODEL_PATH = (
-    CHECKPOINT_DIR /
-    "darkimage_v0_5.npz"
-)
-
-VOCAB_PATH = (
-    CHECKPOINT_DIR /
-    "darkimage_v0_5_vocab.json"
-)
+MODEL_PATH = CHECKPOINT_DIR / "crystal_image_v0_6.npz"
+VOCAB_PATH = CHECKPOINT_DIR / "crystal_image_v0_6_vocab.json"
 
 
-def load_dataset(size):
-    pairs = []
+def save_sample(model, tokenizer, caption, step):
+    text = tokenizer.text_vector(
+        caption,
+        model.embedding,
+    )
 
-    for image_path in sorted(
-        DATA_DIR.iterdir()
-    ):
-        if image_path.suffix.lower() not in {
-            ".png",
-            ".jpg",
-            ".jpeg",
-        }:
-            continue
+    rng = np.random.default_rng(1000 + step)
 
-        caption_path = image_path.with_suffix(
-            ".txt"
+    image = rng.normal(
+        0,
+        1,
+        model.output_size,
+    ).astype(np.float32)
+
+    # Iterative denoising.
+    for i in range(60):
+        timestep = 1.0 - (
+            i / 59.0
         )
 
-        if not caption_path.exists():
-            print(
-                f"Skipping {image_path.name}: "
-                f"missing caption"
-            )
-            continue
+        prediction = model.denoise(
+            image,
+            text,
+            timestep,
+        )
 
-        caption = caption_path.read_text(
-            encoding="utf-8"
-        ).strip()
-
-        if not caption:
-            continue
+        strength = 0.12
 
         image = (
-            Image.open(image_path)
-            .convert("RGB")
-            .resize((size, size))
+            (1.0 - strength) * image
+            + strength * prediction
         )
 
-        array = (
-            np.asarray(
-                image,
-                dtype=np.float32,
-            ) / 255.0
+        image = np.clip(
+            image,
+            0,
+            1,
         )
 
-        pairs.append(
-            (
-                array.reshape(-1),
-                caption,
-            )
-        )
+    image = image.reshape(
+        model.image_size,
+        model.image_size,
+        3,
+    )
 
-    if not pairs:
-        raise RuntimeError(
-            "No image/caption pairs found."
-        )
+    SAMPLE_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    return pairs
+    output = (
+        SAMPLE_DIR /
+        f"v0_6_step_{step}.png"
+    )
+
+    Image.fromarray(
+        (image * 255).astype(np.uint8),
+        "RGB",
+    ).resize(
+        (256, 256),
+        Image.Resampling.NEAREST,
+    ).save(output)
+
+    return output
 
 
 def main():
     print("================================")
-    print("       DarkImage v0.5")
-    print("   Iterative Denoising Model")
+    print("       Crystal Image v0.6")
+    print("  Dataset + Sample Generation")
     print("================================")
 
     CHECKPOINT_DIR.mkdir(
@@ -91,15 +93,22 @@ def main():
         exist_ok=True,
     )
 
-    pairs = load_dataset(32)
+    dataset = Dataset(
+        DATA_DIR,
+        32,
+    )
+
+    dataset.summary()
+
+    if len(dataset) == 0:
+        raise RuntimeError(
+            "No training pairs found."
+        )
 
     tokenizer = Tokenizer()
 
     tokenizer.build(
-        [
-            caption
-            for _, caption in pairs
-        ]
+        dataset.captions()
     )
 
     model = DarkImage(
@@ -113,12 +122,11 @@ def main():
     steps = 5000
 
     print(
-        f"Training pairs: {len(pairs)}"
+        f"Training pairs: {len(dataset)}"
     )
 
     print(
-        f"Vocabulary: "
-        f"{len(tokenizer.vocab)}"
+        f"Vocabulary: {len(tokenizer.vocab)}"
     )
 
     print(
@@ -126,25 +134,23 @@ def main():
     )
 
     for step in range(steps):
-
-        target, caption = pairs[
-            rng.integers(len(pairs))
-        ]
-
-        text_vector = (
-            tokenizer.text_vector(
-                caption,
-                model.embedding,
-            )
+        index = rng.integers(
+            len(dataset)
         )
 
-        # Random diffusion timestep.
+        target, caption, filename = (
+            dataset.get(index)
+        )
+
+        text_vector = tokenizer.text_vector(
+            caption,
+            model.embedding,
+        )
+
         timestep = (
-            rng.integers(1, 101)
-            / 100.0
+            rng.integers(1, 101) / 100.0
         )
 
-        # More noise at larger timesteps.
         noise = rng.normal(
             0,
             1,
@@ -153,8 +159,7 @@ def main():
 
         noisy = (
             (1.0 - timestep) * target
-            +
-            timestep * noise
+            + timestep * noise
         )
 
         prediction, x, h1, h2 = (
@@ -173,11 +178,8 @@ def main():
             error ** 2
         )
 
-        # Backpropagation.
         d3 = (
-            2.0 *
-            error /
-            error.size
+            2.0 * error / error.size
         )
 
         d3 *= (
@@ -192,10 +194,7 @@ def main():
 
         db3 = d3
 
-        dh2 = (
-            d3 @ model.W3.T
-        )
-
+        dh2 = d3 @ model.W3.T
         dh2[h2[0] <= 0] = 0
 
         dW2 = np.outer(
@@ -205,10 +204,7 @@ def main():
 
         db2 = dh2
 
-        dh1 = (
-            dh2 @ model.W2.T
-        )
-
+        dh1 = dh2 @ model.W2.T
         dh1[h1[0] <= 0] = 0
 
         dW1 = np.outer(
@@ -218,9 +214,7 @@ def main():
 
         db1 = dh1
 
-        dx = (
-            dh1 @ model.W1.T
-        )
+        dx = dh1 @ model.W1.T
 
         d_text = dx[
             model.output_size:
@@ -238,13 +232,10 @@ def main():
 
         for token_id in token_ids:
             d_embedding[token_id] += (
-                d_text /
-                len(token_ids)
+                d_text / len(token_ids)
             )
 
-        # Gradient clipping keeps CPU training
-        # from exploding on difficult examples.
-        for gradient in [
+        gradients = [
             dW1,
             db1,
             dW2,
@@ -252,7 +243,9 @@ def main():
             dW3,
             db3,
             d_embedding,
-        ]:
+        ]
+
+        for gradient in gradients:
             np.clip(
                 gradient,
                 -1.0,
@@ -260,29 +253,14 @@ def main():
                 out=gradient,
             )
 
-        model.W1 -= (
-            learning_rate * dW1
-        )
+        model.W1 -= learning_rate * dW1
+        model.b1 -= learning_rate * db1
 
-        model.b1 -= (
-            learning_rate * db1
-        )
+        model.W2 -= learning_rate * dW2
+        model.b2 -= learning_rate * db2
 
-        model.W2 -= (
-            learning_rate * dW2
-        )
-
-        model.b2 -= (
-            learning_rate * db2
-        )
-
-        model.W3 -= (
-            learning_rate * dW3
-        )
-
-        model.b3 -= (
-            learning_rate * db3
-        )
+        model.W3 -= learning_rate * dW3
+        model.b3 -= learning_rate * db3
 
         model.embedding -= (
             learning_rate *
@@ -291,11 +269,11 @@ def main():
 
         if (step + 1) % 250 == 0:
             print(
-                f"step {step + 1:5d}/"
-                f"{steps} "
+                f"step {step + 1:5d}/{steps} "
                 f"loss={loss:.6f}"
             )
 
+    # Save final checkpoint.
     np.savez_compressed(
         MODEL_PATH,
         embedding=model.embedding,
@@ -311,14 +289,33 @@ def main():
         VOCAB_PATH
     )
 
+    # Generate an image from the trained model.
+    sample_caption = dataset.get(0)[1]
+
+    sample = save_sample(
+        model,
+        tokenizer,
+        sample_caption,
+        steps,
+    )
+
+    report = CHECKPOINT_DIR / "training_report.txt"
+
+    report.write_text(
+        "Crystal Image v0.6\n"
+        "==================\n"
+        f"Training pairs: {len(dataset)}\n"
+        f"Vocabulary: {len(tokenizer.vocab)}\n"
+        f"Steps: {steps}\n"
+        f"Sample caption: {sample_caption}\n"
+        f"Sample: {sample}\n",
+        encoding="utf-8",
+    )
+
     print()
     print("Training complete.")
-    print(
-        f"Model: {MODEL_PATH}"
-    )
-    print(
-        f"Vocabulary: {VOCAB_PATH}"
-    )
+    print(f"Checkpoint: {MODEL_PATH}")
+    print(f"Sample: {sample}")
 
 
 if __name__ == "__main__":
