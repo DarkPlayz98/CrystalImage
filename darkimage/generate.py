@@ -1,144 +1,130 @@
 from pathlib import Path
-import sys
 
 import numpy as np
 from PIL import Image
 
-from .model import DarkImage
+from .model import CrystalImage
 from .tokenizer import Tokenizer
 
 
-MODEL_PATH = (
-    Path("checkpoints") /
-    "darkimage_v0_5.npz"
+CHECKPOINT = Path(
+    "checkpoints/crystal_image_v0_8.npz"
 )
 
-VOCAB_PATH = (
-    Path("checkpoints") /
-    "darkimage_v0_5_vocab.json"
+VOCAB = Path(
+    "checkpoints/crystal_image_v0_8_vocab.json"
 )
 
-OUTPUT_DIR = (
-    Path.home() /
-    "storage" /
-    "shared" /
-    "Windows"
+OUTPUT = Path(
+    "generated_crystal_v0_8.png"
 )
+
+SIZE = 64
 
 
 def main():
-    prompt = " ".join(
-        sys.argv[1:]
-    ).strip()
+    print("==============================")
+    print("   Crystal Image v0.8")
+    print("      64x64 Generator")
+    print("==============================")
 
-    if not prompt:
-        raise SystemExit(
-            'Usage: python -m '
-            'darkimage.generate '
-            '"a black cat"'
+    if not CHECKPOINT.exists():
+        raise FileNotFoundError(
+            f"Missing checkpoint: {CHECKPOINT}"
         )
 
-    if not MODEL_PATH.exists():
-        raise SystemExit(
-            "v0.5 model not found. "
-            "Run training first."
+    if not VOCAB.exists():
+        raise FileNotFoundError(
+            f"Missing vocabulary: {VOCAB}"
         )
+
+    model = CrystalImage.load(
+        CHECKPOINT
+    )
 
     tokenizer = Tokenizer.load(
-        VOCAB_PATH
+        VOCAB
     )
 
-    data = np.load(
-        MODEL_PATH
+    prompt = (
+        "a detailed glowing blue crystal "
+        "floating in darkness, sharp geometric "
+        "facets, luminous edges, magical energy, "
+        "bright core"
     )
-
-    model = DarkImage(
-        vocab_size=len(
-            tokenizer.vocab
-        )
-    )
-
-    model.embedding = data["embedding"]
-    model.W1 = data["W1"]
-    model.b1 = data["b1"]
-    model.W2 = data["W2"]
-    model.b2 = data["b2"]
-    model.W3 = data["W3"]
-    model.b3 = data["b3"]
 
     text = tokenizer.text_vector(
         prompt,
         model.embedding,
     )
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(
+        20260826
+    )
 
-    # Start with pure noise.
+    # Start from random noise.
     image = rng.normal(
         0,
         1,
-        model.output_size,
+        model.image_dim,
     ).astype(np.float32)
 
-    # Iteratively denoise.
-    steps = 50
-
-    for i in range(steps):
-        timestep = (
-            1.0 -
-            (i / (steps - 1))
-        )
-
-        prediction = model.denoise(
-            image,
-            text,
+    # Iterative denoising.
+    for timestep in range(
+        999,
+        0,
+        -20,
+    ):
+        prediction = model.forward(
+            image[None, :],
+            text[None, :],
             timestep,
+        )[0]
+
+        strength = 0.035
+
+        image -= (
+            prediction * strength
         )
 
-        # Gradually move toward prediction.
-        strength = 0.12
+        if timestep % 100 == 0:
+            print(
+                f"denoising timestep "
+                f"{timestep}"
+            )
 
-        image = (
-            (1.0 - strength) * image
-            +
-            strength * prediction
-        )
+    # Convert model output to RGB.
+    image = np.clip(
+        image,
+        -1,
+        1,
+    )
 
-        image = np.clip(
-            image,
-            0,
-            1,
-        )
+    image = (
+        (image + 1.0)
+        * 127.5
+    ).astype(np.uint8)
 
     image = image.reshape(
-        model.image_size,
-        model.image_size,
+        SIZE,
+        SIZE,
         3,
     )
 
-    OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    safe_name = "_".join(
-        prompt.lower().split()
-    )[:50]
-
-    output = (
-        OUTPUT_DIR /
-        f"darkimage_v0_5_{safe_name}.png"
-    )
-
-    Image.fromarray(
-        (
-            image * 255
-        ).astype(np.uint8),
+    result = Image.fromarray(
+        image,
         "RGB",
-    ).save(output)
+    )
+
+    result.save(OUTPUT)
+
+    print()
+    print(
+        f"Generated: {OUTPUT}"
+    )
 
     print(
-        f"Generated: {output}"
+        f"Resolution: {SIZE}x{SIZE}"
     )
 
 

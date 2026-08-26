@@ -3,249 +3,197 @@ import numpy as np
 
 class CrystalImage:
     """
-    Crystal Image v0.7
+    Crystal Image v0.8
+    64x64 text-conditioned denoising model.
 
-    Tiny fully custom 32x32 text-conditioned
-    encoder/decoder model.
-
-    No pretrained weights.
+    This is a lightweight NumPy prototype designed to run
+    in GitHub Actions and on Termux without PyTorch.
     """
+
+    VERSION = "0.8"
+    IMAGE_SIZE = 64
+    CHANNELS = 3
 
     def __init__(
         self,
-        vocab_size,
-        image_size=32,
-        embedding_size=32,
-        latent_size=128,
-        hidden_size=256,
+        vocab_size=64,
+        embedding_dim=32,
         seed=42,
     ):
-        self.image_size = image_size
-        self.output_size = image_size * image_size * 3
-        self.embedding_size = embedding_size
-        self.latent_size = latent_size
-        self.hidden_size = hidden_size
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
 
-        rng = np.random.default_rng(seed)
+        self.rng = np.random.default_rng(seed)
+
+        self.image_dim = (
+            self.IMAGE_SIZE
+            * self.IMAGE_SIZE
+            * self.CHANNELS
+        )
+
+        # Compact latent representation.
+        self.latent_size = 256
 
         self.embedding = (
-            rng.normal(
+            self.rng.normal(
                 0,
-                0.05,
-                (vocab_size, embedding_size),
-            )
-        ).astype(np.float32)
-
-        # Image encoder.
-        self.W_encode = (
-            rng.normal(
-                0,
-                np.sqrt(
-                    2.0 / self.output_size
-                ),
+                0.02,
                 (
-                    self.output_size,
-                    latent_size,
+                    vocab_size,
+                    embedding_dim,
                 ),
-            )
-        ).astype(np.float32)
-
-        self.b_encode = np.zeros(
-            latent_size,
-            dtype=np.float32,
+            ).astype(np.float32)
         )
 
-        # Text + latent conditioning.
-        condition_size = (
-            latent_size +
-            embedding_size +
-            1
-        )
-
-        self.W_condition = (
-            rng.normal(
+        self.text_projection = (
+            self.rng.normal(
                 0,
-                np.sqrt(
-                    2.0 / condition_size
-                ),
+                0.02,
                 (
-                    condition_size,
-                    hidden_size,
+                    embedding_dim,
+                    self.latent_size,
                 ),
-            )
-        ).astype(np.float32)
-
-        self.b_condition = np.zeros(
-            hidden_size,
-            dtype=np.float32,
+            ).astype(np.float32)
         )
 
-        # Decoder.
-        self.W_decode = (
-            rng.normal(
+        self.image_projection = (
+            self.rng.normal(
                 0,
-                np.sqrt(
-                    2.0 / hidden_size
-                ),
+                0.02,
                 (
-                    hidden_size,
-                    self.output_size,
+                    self.image_dim,
+                    self.latent_size,
                 ),
-            )
-        ).astype(np.float32)
+            ).astype(np.float32)
+        )
 
-        self.b_decode = np.zeros(
-            self.output_size,
+        self.output_projection = (
+            self.rng.normal(
+                0,
+                0.02,
+                (
+                    self.latent_size,
+                    self.image_dim,
+                ),
+            ).astype(np.float32)
+        )
+
+        self.bias = np.zeros(
+            self.image_dim,
             dtype=np.float32,
         )
-
-    @staticmethod
-    def relu(x):
-        return np.maximum(x, 0)
-
-    @staticmethod
-    def sigmoid(x):
-        return 1.0 / (
-            1.0 +
-            np.exp(
-                -np.clip(x, -30, 30)
-            )
-        )
-
-    def encode(self, image):
-        image = np.asarray(
-            image,
-            dtype=np.float32,
-        ).reshape(1, -1)
-
-        latent = self.relu(
-            image @ self.W_encode
-            + self.b_encode
-        )
-
-        return latent[0]
-
-    def condition(
-        self,
-        latent,
-        text_vector,
-        timestep=0.0,
-    ):
-        x = np.concatenate(
-            [
-                np.asarray(
-                    latent,
-                    dtype=np.float32,
-                ).reshape(-1),
-
-                np.asarray(
-                    text_vector,
-                    dtype=np.float32,
-                ).reshape(-1),
-
-                np.asarray(
-                    [timestep],
-                    dtype=np.float32,
-                ),
-            ]
-        )
-
-        hidden = self.relu(
-            x @ self.W_condition
-            + self.b_condition
-        )
-
-        return hidden, x
-
-    def decode(self, hidden):
-        output = self.sigmoid(
-            hidden @ self.W_decode
-            + self.b_decode
-        )
-
-        return output
 
     def forward(
         self,
-        image,
+        noisy,
         text_vector,
-        timestep=0.0,
+        timestep,
     ):
-        latent = self.encode(image)
-
-        hidden, condition_input = (
-            self.condition(
-                latent,
-                text_vector,
-                timestep,
-            )
+        noisy = np.asarray(
+            noisy,
+            dtype=np.float32,
         )
 
-        output = self.decode(hidden)
-
-        return (
-            output,
-            latent,
-            hidden,
-            condition_input,
-        )
-
-    def generate(
-        self,
-        text_vector,
-        steps=50,
-        seed=1234,
-    ):
-        rng = np.random.default_rng(
-            seed
-        )
-
-        # Start in latent space.
-        latent = rng.normal(
-            0,
-            1,
-            self.latent_size,
-        ).astype(np.float32)
-
-        # Iterative latent denoising.
-        for i in range(steps):
-            timestep = 1.0 - (
-                i / max(steps - 1, 1)
-            )
-
-            hidden, _ = self.condition(
-                latent,
-                text_vector,
-                timestep,
-            )
-
-            prediction = self.decode(
-                hidden
-            )
-
-            # Compress prediction back toward
-            # latent dimensionality using the
-            # encoder weights.
-            predicted_latent = (
-                prediction @ self.W_encode
-            )
-
-            predicted_latent = np.tanh(
-                predicted_latent
-            )
-
-            strength = 0.08
-
-            latent = (
-                (1.0 - strength) * latent
-                +
-                strength * predicted_latent
-            )
-
-        hidden, _ = self.condition(
-            latent,
+        text_vector = np.asarray(
             text_vector,
-            0.0,
+            dtype=np.float32,
         )
 
-        return self.decode(hidden)
+        if noisy.ndim == 1:
+            noisy = noisy[None, :]
+
+        if text_vector.ndim == 1:
+            text_vector = text_vector[None, :]
+
+        batch = noisy.shape[0]
+
+        image_features = (
+            noisy @ self.image_projection
+        )
+
+        text_features = (
+            text_vector @ self.text_projection
+        )
+
+        # Normalize timestep.
+        t = np.asarray(
+            timestep,
+            dtype=np.float32,
+        )
+
+        if t.ndim == 0:
+            t = np.full(
+                (batch, 1),
+                float(t) / 1000.0,
+                dtype=np.float32,
+            )
+        elif t.ndim == 1:
+            t = t.reshape(-1, 1) / 1000.0
+
+        # Time conditioning.
+        time_features = np.repeat(
+            t,
+            self.latent_size,
+            axis=1,
+        )
+
+        hidden = (
+            image_features
+            + text_features
+            + time_features * 0.1
+        )
+
+        hidden = np.tanh(hidden)
+
+        prediction = (
+            hidden @ self.output_projection
+            + self.bias
+        )
+
+        return prediction
+
+    def save(self, path):
+        np.savez(
+            path,
+            version=self.VERSION,
+            image_size=self.IMAGE_SIZE,
+            channels=self.CHANNELS,
+            vocab_size=self.vocab_size,
+            embedding_dim=self.embedding_dim,
+            latent_size=self.latent_size,
+            embedding=self.embedding,
+            text_projection=self.text_projection,
+            image_projection=self.image_projection,
+            output_projection=self.output_projection,
+            bias=self.bias,
+        )
+
+    @classmethod
+    def load(cls, path):
+        data = np.load(
+            path,
+            allow_pickle=False,
+        )
+
+        model = cls(
+            vocab_size=int(
+                data["vocab_size"]
+            ),
+            embedding_dim=int(
+                data["embedding_dim"]
+            ),
+        )
+
+        model.embedding = data["embedding"]
+        model.text_projection = data[
+            "text_projection"
+        ]
+        model.image_projection = data[
+            "image_projection"
+        ]
+        model.output_projection = data[
+            "output_projection"
+        ]
+        model.bias = data["bias"]
+
+        return model
