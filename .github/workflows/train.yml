@@ -6,15 +6,18 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   train:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Crystal Image
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -24,20 +27,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Create 64x64 training dataset
+        run: |
+          python -m darkimage.create_crystal_dataset
+
       - name: Check dataset
         run: |
           python -m darkimage.check_dataset
 
-      - name: Train Crystal Image v0.6
+      - name: Train Crystal Image
         run: |
           python -m darkimage.train
 
-      - name: Upload trained model and images
+      - name: Generate test image
+        run: |
+          python -m darkimage.generate
+
+      - name: Upload generated image
         uses: actions/upload-artifact@v4
         with:
-          name: crystal-image-v0.6-${{ github.sha }}
+          name: crystal-image-v0.8
           path: |
-            checkpoints/*.npz
-            checkpoints/*.json
-            checkpoints/*.txt
-            samples/*.png
+            generated_crystal_v0_8.png
+            checkpoints/crystal_image_v0_8.npz
+            checkpoints/crystal_image_v0_8_vocab.json
