@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 
 from .dataset import Dataset
-from .model import DarkImage
+from .model import CrystalImage
 from .tokenizer import Tokenizer
 
 
@@ -12,63 +12,20 @@ DATA_DIR = Path("data/train")
 CHECKPOINT_DIR = Path("checkpoints")
 SAMPLE_DIR = Path("samples")
 
-MODEL_PATH = CHECKPOINT_DIR / "crystal_image_v0_6.npz"
-VOCAB_PATH = CHECKPOINT_DIR / "crystal_image_v0_6_vocab.json"
+STEPS = 5000
+IMAGE_SIZE = 32
+LEARNING_RATE = 0.0005
 
 
-def save_sample(model, tokenizer, caption, step):
-    text = tokenizer.text_vector(
-        caption,
-        model.embedding,
-    )
-
-    rng = np.random.default_rng(1000 + step)
-
-    image = rng.normal(
+def save_image(vector, path):
+    image = np.clip(
+        vector.reshape(
+            IMAGE_SIZE,
+            IMAGE_SIZE,
+            3,
+        ),
         0,
         1,
-        model.output_size,
-    ).astype(np.float32)
-
-    # Iterative denoising.
-    for i in range(60):
-        timestep = 1.0 - (
-            i / 59.0
-        )
-
-        prediction = model.denoise(
-            image,
-            text,
-            timestep,
-        )
-
-        strength = 0.12
-
-        image = (
-            (1.0 - strength) * image
-            + strength * prediction
-        )
-
-        image = np.clip(
-            image,
-            0,
-            1,
-        )
-
-    image = image.reshape(
-        model.image_size,
-        model.image_size,
-        3,
-    )
-
-    SAMPLE_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    output = (
-        SAMPLE_DIR /
-        f"v0_6_step_{step}.png"
     )
 
     Image.fromarray(
@@ -77,25 +34,18 @@ def save_sample(model, tokenizer, caption, step):
     ).resize(
         (256, 256),
         Image.Resampling.NEAREST,
-    ).save(output)
-
-    return output
+    ).save(path)
 
 
 def main():
     print("================================")
-    print("       Crystal Image v0.6")
-    print("  Dataset + Sample Generation")
+    print("       Crystal Image v0.7")
+    print("       32x32 Latent Model")
     print("================================")
-
-    CHECKPOINT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
 
     dataset = Dataset(
         DATA_DIR,
-        32,
+        IMAGE_SIZE,
     )
 
     dataset.summary()
@@ -106,49 +56,34 @@ def main():
         )
 
     tokenizer = Tokenizer()
+    tokenizer.build(dataset.captions())
 
-    tokenizer.build(
-        dataset.captions()
-    )
-
-    model = DarkImage(
+    model = CrystalImage(
         vocab_size=len(tokenizer.vocab),
-        seed=123,
+        image_size=IMAGE_SIZE,
+        seed=2026,
     )
 
     rng = np.random.default_rng(2026)
 
-    learning_rate = 0.001
-    steps = 5000
+    print(f"Training pairs: {len(dataset)}")
+    print(f"Vocabulary: {len(tokenizer.vocab)}")
+    print(f"Training steps: {STEPS}")
 
-    print(
-        f"Training pairs: {len(dataset)}"
-    )
+    for step in range(STEPS):
+        index = rng.integers(len(dataset))
 
-    print(
-        f"Vocabulary: {len(tokenizer.vocab)}"
-    )
+        target, caption, _ = dataset.get(index)
 
-    print(
-        f"Training steps: {steps}"
-    )
-
-    for step in range(steps):
-        index = rng.integers(
-            len(dataset)
-        )
-
-        target, caption, filename = (
-            dataset.get(index)
-        )
-
-        text_vector = tokenizer.text_vector(
+        text = tokenizer.text_vector(
             caption,
             model.embedding,
         )
 
-        timestep = (
-            rng.integers(1, 101) / 100.0
+        # Train reconstruction with noise.
+        noise_level = rng.uniform(
+            0.05,
+            0.35,
         )
 
         noise = rng.normal(
@@ -158,164 +93,235 @@ def main():
         ).astype(np.float32)
 
         noisy = (
-            (1.0 - timestep) * target
-            + timestep * noise
+            (1.0 - noise_level) * target
+            + noise_level * noise
         )
 
-        prediction, x, h1, h2 = (
+        noisy = np.clip(
+            noisy,
+            0,
+            1,
+        )
+
+        prediction, latent, hidden, condition_input = (
             model.forward(
-                noisy[None, :],
-                text_vector[None, :],
-                timestep,
+                noisy,
+                text,
+                noise_level,
             )
         )
 
-        prediction = prediction[0]
-
         error = prediction - target
+        loss = np.mean(error ** 2)
 
-        loss = np.mean(
-            error ** 2
-        )
-
-        d3 = (
+        # Decoder gradient.
+        d_output = (
             2.0 * error / error.size
         )
 
-        d3 *= (
+        d_sigmoid = (
             prediction *
             (1.0 - prediction)
         )
 
-        dW3 = np.outer(
-            h2[0],
-            d3,
+        d_decode = (
+            d_output * d_sigmoid
         )
 
-        db3 = d3
-
-        dh2 = d3 @ model.W3.T
-        dh2[h2[0] <= 0] = 0
-
-        dW2 = np.outer(
-            h1[0],
-            dh2,
+        dW_decode = np.outer(
+            hidden,
+            d_decode,
         )
 
-        db2 = dh2
+        db_decode = d_decode
 
-        dh1 = dh2 @ model.W2.T
-        dh1[h1[0] <= 0] = 0
-
-        dW1 = np.outer(
-            x[0],
-            dh1,
+        # Hidden layer gradient.
+        dhidden = (
+            d_decode @ model.W_decode.T
         )
 
-        db1 = dh1
+        dhidden[hidden <= 0] = 0
 
-        dx = dh1 @ model.W1.T
+        dW_condition = np.outer(
+            condition_input,
+            dhidden,
+        )
 
-        d_text = dx[
-            model.output_size:
-            model.output_size +
+        db_condition = dhidden
+
+        dcondition = (
+            dhidden @ model.W_condition.T
+        )
+
+        latent_grad = dcondition[
+            :model.latent_size
+        ]
+
+        text_grad = dcondition[
+            model.latent_size:
+            model.latent_size +
             model.embedding_size
         ]
 
+        # Encoder gradient.
+        encoded_input = noisy
+
+        dW_encode = np.outer(
+            encoded_input,
+            latent_grad,
+        )
+
+        db_encode = latent_grad
+
+        # Update weights.
+        np.clip(
+            dW_decode,
+            -1,
+            1,
+            out=dW_decode,
+        )
+
+        np.clip(
+            dW_condition,
+            -1,
+            1,
+            out=dW_condition,
+        )
+
+        np.clip(
+            dW_encode,
+            -1,
+            1,
+            out=dW_encode,
+        )
+
+        model.W_decode -= (
+            LEARNING_RATE *
+            dW_decode
+        )
+
+        model.b_decode -= (
+            LEARNING_RATE *
+            db_decode
+        )
+
+        model.W_condition -= (
+            LEARNING_RATE *
+            dW_condition
+        )
+
+        model.b_condition -= (
+            LEARNING_RATE *
+            db_condition
+        )
+
+        model.W_encode -= (
+            LEARNING_RATE *
+            dW_encode
+        )
+
+        model.b_encode -= (
+            LEARNING_RATE *
+            db_encode
+        )
+
+        # Update the words used by this caption.
         token_ids = tokenizer.encode(
             caption
         )
 
-        d_embedding = np.zeros_like(
-            model.embedding
-        )
-
-        for token_id in token_ids:
-            d_embedding[token_id] += (
-                d_text / len(token_ids)
-            )
-
-        gradients = [
-            dW1,
-            db1,
-            dW2,
-            db2,
-            dW3,
-            db3,
-            d_embedding,
-        ]
-
-        for gradient in gradients:
-            np.clip(
-                gradient,
-                -1.0,
-                1.0,
-                out=gradient,
-            )
-
-        model.W1 -= learning_rate * dW1
-        model.b1 -= learning_rate * db1
-
-        model.W2 -= learning_rate * dW2
-        model.b2 -= learning_rate * db2
-
-        model.W3 -= learning_rate * dW3
-        model.b3 -= learning_rate * db3
-
-        model.embedding -= (
-            learning_rate *
-            d_embedding
-        )
+        if token_ids:
+            for token_id in token_ids:
+                model.embedding[token_id] -= (
+                    LEARNING_RATE *
+                    text_grad /
+                    len(token_ids)
+                )
 
         if (step + 1) % 250 == 0:
             print(
-                f"step {step + 1:5d}/{steps} "
+                f"step {step + 1:5d}/{STEPS} "
                 f"loss={loss:.6f}"
             )
 
-    # Save final checkpoint.
+    CHECKPOINT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    checkpoint = (
+        CHECKPOINT_DIR /
+        "crystal_image_v0_7.npz"
+    )
+
     np.savez_compressed(
-        MODEL_PATH,
+        checkpoint,
         embedding=model.embedding,
-        W1=model.W1,
-        b1=model.b1,
-        W2=model.W2,
-        b2=model.b2,
-        W3=model.W3,
-        b3=model.b3,
+        W_encode=model.W_encode,
+        b_encode=model.b_encode,
+        W_condition=model.W_condition,
+        b_condition=model.b_condition,
+        W_decode=model.W_decode,
+        b_decode=model.b_decode,
     )
 
-    tokenizer.save(
-        VOCAB_PATH
+    vocab = (
+        CHECKPOINT_DIR /
+        "crystal_image_v0_7_vocab.json"
     )
 
-    # Generate an image from the trained model.
-    sample_caption = dataset.get(0)[1]
+    tokenizer.save(vocab)
 
-    sample = save_sample(
-        model,
-        tokenizer,
-        sample_caption,
-        steps,
+    # Generate a sample using the trained model.
+    caption = dataset.get(0)[1]
+
+    text = tokenizer.text_vector(
+        caption,
+        model.embedding,
     )
 
-    report = CHECKPOINT_DIR / "training_report.txt"
+    generated = model.generate(
+        text,
+        steps=50,
+        seed=2026,
+    )
+
+    SAMPLE_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    sample = (
+        SAMPLE_DIR /
+        "crystal_image_v0_7.png"
+    )
+
+    save_image(
+        generated,
+        sample,
+    )
+
+    report = (
+        CHECKPOINT_DIR /
+        "crystal_image_v0_7_report.txt"
+    )
 
     report.write_text(
-        "Crystal Image v0.6\n"
+        "Crystal Image v0.7\n"
         "==================\n"
+        f"Resolution: {IMAGE_SIZE}x{IMAGE_SIZE}\n"
         f"Training pairs: {len(dataset)}\n"
         f"Vocabulary: {len(tokenizer.vocab)}\n"
-        f"Steps: {steps}\n"
-        f"Sample caption: {sample_caption}\n"
-        f"Sample: {sample}\n",
+        f"Steps: {STEPS}\n"
+        f"Learning rate: {LEARNING_RATE}\n"
+        f"Sample caption: {caption}\n",
         encoding="utf-8",
     )
 
     print()
-    print("Training complete.")
-    print(f"Checkpoint: {MODEL_PATH}")
-    print(f"Sample: {sample}")
+    print("Training complete!")
+    print(f"Checkpoint: {checkpoint}")
+    print(f"Generated:  {sample}")
 
 
 if __name__ == "__main__":
