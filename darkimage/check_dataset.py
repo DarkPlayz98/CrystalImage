@@ -4,7 +4,7 @@ from PIL import Image
 
 
 DATASET = Path("data/train")
-EXPECTED_SIZE = (64, 64)
+EXPECTED_SIZE = (128, 128)
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
             print(
                 f"Skipping {image_path.name}: "
                 f"size is {size[0]}x{size[1]}, "
-                f"expected 64x64"
+                f"expected 128x128"
             )
             continue
 
@@ -49,7 +49,7 @@ def main():
 
     print(f"Images: {len(images)}")
     print(f"Valid training pairs: {pairs}")
-    print("Resolution: 64x64")
+    print("Resolution: 128x128")
 
     if pairs:
         example = next(
@@ -66,7 +66,7 @@ def main():
 
     if pairs == 0:
         raise RuntimeError(
-            "No valid 64x64 image/caption pairs found."
+            "No valid 128x128 image/caption pairs found."
         )
 
     print()
