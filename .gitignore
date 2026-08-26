@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Generated images
+generated.png
+data/generated/
+storage/
+
+# Training checkpoints
+checkpoints/*.npz
+
+# Temporary files
+*.tmp
+*.log
