@@ -1,12 +1,13 @@
-name: Crystal Image v0.9 - Long Training
+name: Crystal Image v1.0 512x512
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
-  group: crystal-image-training
+  group: crystal-image-v1-training
   cancel-in-progress: true
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create 128x128 dataset
+      - name: Create 512x512 dataset
         run: |
           rm -rf data/train
           mkdir -p data/train
@@ -41,44 +42,24 @@ jobs:
         run: |
           python -m darkimage.check_dataset
 
-      - name: Train Crystal Image - High Quality
+      - name: Train Crystal Image v1.0
         run: |
           python -m darkimage.train
 
-      - name: Show training outputs
-        if: always()
-        run: |
-          echo "=== Checkpoints ==="
-          find checkpoints -type f -print 2>/dev/null || true
-          echo "=== Generated images ==="
-          find . -maxdepth 2 -type f \( -name "*.png" -o -name "*.jpg" \) -print | head -50
-
-      - name: Generate sample
+      - name: Generate crystal
         run: |
           python -m darkimage.generate
 
-      - name: Upload generated sample
-        if: always()
+      - name: Upload generated crystal
         uses: actions/upload-artifact@v4
         with:
-          name: crystal-image-v0.9-sample
-          path: |
-            generated*.png
-            outputs/*.png
-          if-no-files-found: warn
+          name: Crystal-Image-v1.0-512x512
+          path: generated_crystal_v1_0.png
+          if-no-files-found: error
 
-      - name: Upload trained model
-        if: always()
+      - name: Upload model
         uses: actions/upload-artifact@v4
         with:
-          name: crystal-image-v0.9-model
-          path: checkpoints/*.npz
-          if-no-files-found: warn
-
-      - name: Upload vocabulary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: crystal-image-v0.9-vocabulary
-          path: checkpoints/*vocab*.json
-          if-no-files-found: warn
+          name: Crystal-Image-v1.0-Model
+          path: checkpoints/crystal_image_v1_0.npz
+          if-no-files-found: error

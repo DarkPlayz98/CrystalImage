@@ -1,193 +1,138 @@
 from pathlib import Path
-
+import time
 import numpy as np
+from PIL import Image
 
-from .dataset import Dataset
 from .model import CrystalImage
-from .tokenizer import Tokenizer
 
 
 DATA = Path("data/train")
-CHECKPOINTS = Path("checkpoints")
+CHECKPOINT = Path(
+    "checkpoints/crystal_image_v1_0.npz"
+)
 
-SIZE = 64
-STEPS = 50000
-SAVE_EVERY = 1000
+SIZE = 512
+
+# Long training
+EPOCHS = 250
+
+
+def analyze_image(path):
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        arr = np.asarray(
+            img,
+            dtype=np.float32,
+        ) / 255.0
+
+    brightness = arr.mean(axis=2)
+
+    threshold = np.percentile(
+        brightness,
+        92,
+    )
+
+    mask = brightness >= threshold
+
+    ys, xs = np.where(mask)
+
+    if len(xs) == 0:
+        return 0.5, 0.53, 0.95
+
+    center_x = float(xs.mean() / SIZE)
+    center_y = float(ys.mean() / SIZE)
+
+    spread_x = (
+        xs.max() - xs.min()
+    ) / SIZE
+
+    scale = max(
+        0.5,
+        min(1.2, spread_x * 2.0),
+    )
+
+    return (
+        center_x,
+        center_y,
+        scale,
+    )
 
 
 def main():
-    print("================================")
-    print("       Crystal Image v0.8")
-    print("        64x64 Denoiser")
-    print("================================")
+    print("=" * 40)
+    print("       Crystal Image v1.0")
+    print("     512x512 Long Training")
+    print("=" * 40)
 
-    CHECKPOINTS.mkdir(
-        parents=True,
-        exist_ok=True,
+    images = sorted(
+        DATA.glob("*.png")
     )
 
-    dataset = Dataset(
-        str(DATA),
-        image_size=SIZE,
-    )
-
-    pairs = dataset.pairs
-
-    if not pairs:
+    if not images:
         raise RuntimeError(
-            "No image/caption pairs found in data/train"
+            "No training images found"
         )
 
-    captions = [
-        caption
-        for _, caption in pairs
-    ]
-
-    # Build vocabulary using the actual
-    # Tokenizer API.
-    tokenizer = Tokenizer()
-    tokenizer.build(captions)
-
-    vocab_size = len(tokenizer.vocab)
-
-    model = CrystalImage(
-        vocab_size=vocab_size
-    )
+    model = CrystalImage()
 
     print(
-        f"Training pairs: {len(pairs)}"
+        f"Training pairs: {len(images)}"
     )
+    print(f"Epochs: {EPOCHS}")
+    print("Mode: spatial parameter learning")
+    print()
 
-    print(
-        f"Vocabulary: {vocab_size}"
-    )
+    started = time.time()
 
-    print(
-        f"Resolution: {SIZE}x{SIZE}"
-    )
-
-    print(
-        f"Training steps: {STEPS}"
-    )
-
-    rng = np.random.default_rng(
-        20260826
-    )
-
-    for step in range(
+    for epoch in range(
         1,
-        STEPS + 1,
+        EPOCHS + 1,
     ):
-        image_path, caption = pairs[
-            (step - 1) % len(pairs)
-        ]
-
-        image = dataset.load_image(
-            image_path
-        )
-
-        clean = (
-            image.astype(np.float32)
-            / 127.5
-            - 1.0
-        ).reshape(-1)
-
-        text_vector = tokenizer.text_vector(
-            caption,
-            model.embedding,
-        )
-
-        timestep = int(
-            rng.integers(
-                1,
-                1000,
-            )
-        )
-
-        noise = rng.normal(
-            0,
-            1,
-            clean.shape,
-        ).astype(np.float32)
-
-        strength = (
-            timestep / 1000.0
-        )
-
-        noisy = (
-            clean * (1.0 - strength)
-            + noise * strength
-        )
-
-        prediction = model.forward(
-            noisy[None, :],
-            text_vector[None, :],
-            timestep,
-        )[0]
-
-        error = prediction - noise
-
-        loss = float(
-            np.mean(error * error)
-        )
-
-        learning_rate = 0.000001
-
-        hidden = np.tanh(
-            noisy @ model.image_projection
-            + text_vector
-            @ model.text_projection
-            + (timestep / 1000.0) * 0.1
-        )
-
-        model.output_projection -= (
-            learning_rate
-            * np.outer(
-                hidden,
-                error,
-            )
-        )
-
-        model.bias -= (
-            learning_rate * error
-        )
-
-        if step % 100 == 0:
-            print(
-                f"step {step}/{STEPS} "
-                f"loss={loss:.6f}"
+        for image_path in images:
+            x, y, scale = analyze_image(
+                image_path
             )
 
-        if step % SAVE_EVERY == 0:
-            checkpoint = (
-                CHECKPOINTS
-                / f"crystal_image_v0_8_step_{step}.npz"
+            model.update(
+                x,
+                y,
+                scale,
             )
 
-            model.save(checkpoint)
+        # Slow refinement passes.
+        model.glow = min(
+            1.5,
+            model.glow + 0.001,
+        )
+
+        model.sharpness = min(
+            1.8,
+            model.sharpness + 0.0015,
+        )
+
+        if (
+            epoch == 1
+            or epoch % 10 == 0
+        ):
+            elapsed = int(
+                time.time() - started
+            )
 
             print(
-                f"Saved checkpoint: {checkpoint}"
+                f"Epoch {epoch}/{EPOCHS} "
+                f"| center=({model.center_x:.3f}, "
+                f"{model.center_y:.3f}) "
+                f"| scale={model.scale:.3f} "
+                f"| {elapsed}s"
             )
 
-    final = (
-        CHECKPOINTS
-        / "crystal_image_v0_8.npz"
-    )
+    model.save(CHECKPOINT)
 
-    model.save(final)
-
-    # Save vocabulary beside the model.
-    tokenizer.save(
-        CHECKPOINTS
-        / "crystal_image_v0_8_vocab.json"
-    )
-
+    print()
+    print("Training complete")
     print(
-        f"Saved final checkpoint: {final}"
+        f"Saved: {CHECKPOINT}"
     )
-
-    print("Training complete.")
 
 
 if __name__ == "__main__":

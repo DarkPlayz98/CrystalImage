@@ -1,36 +1,50 @@
 from pathlib import Path
+import random
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from .model import CrystalImage
-from .tokenizer import Tokenizer
 
 
 CHECKPOINT = Path(
-    "checkpoints/crystal_image_v0_8.npz"
-)
-
-VOCAB = Path(
-    "checkpoints/crystal_image_v0_8_vocab.json"
+    "checkpoints/crystal_image_v1_0.npz"
 )
 
 OUTPUT = Path(
-    "generated_crystal_v0_8.png"
+    "generated_crystal_v1_0.png"
 )
 
-SIZE = 64
+SIZE = 512
 
 
-def make_crystal_base(seed=20260826):
-    rng = np.random.default_rng(seed)
+def main():
+    print("=" * 40)
+    print("       Crystal Image v1.0")
+    print("       512x512 Generator")
+    print("=" * 40)
+
+    model = CrystalImage.load(
+        CHECKPOINT
+    )
+
+    rng = random.Random(5122026)
+
+    cx = int(
+        SIZE * model.center_x
+    )
+    cy = int(
+        SIZE * model.center_y
+    )
+
+    scale = model.scale
 
     img = Image.new(
         "RGB",
         (SIZE, SIZE),
-        (3, 5, 12),
+        (2, 4, 12),
     )
 
+    # Atmospheric glow
     glow = Image.new(
         "RGBA",
         (SIZE, SIZE),
@@ -39,24 +53,41 @@ def make_crystal_base(seed=20260826):
 
     gd = ImageDraw.Draw(glow)
 
-    # Large soft blue glow
-    for radius in range(22, 2, -2):
-        alpha = int(
-            2 + (22 - radius) * 1.5
+    max_radius = int(
+        220 * model.glow
+    )
+
+    for r in range(
+        max_radius,
+        10,
+        -8,
+    ):
+        alpha = max(
+            1,
+            int(
+                30 * (
+                    1 - r / max_radius
+                )
+            ),
         )
 
         gd.ellipse(
             (
-                32 - radius,
-                34 - radius,
-                32 + radius,
-                34 + radius,
+                cx-r,
+                cy-r,
+                cx+r,
+                cy+r,
             ),
-            fill=(40, 150, 255, alpha),
+            fill=(
+                25,
+                130,
+                255,
+                alpha,
+            ),
         )
 
     glow = glow.filter(
-        ImageFilter.GaussianBlur(7)
+        ImageFilter.GaussianBlur(45)
     )
 
     img = Image.alpha_composite(
@@ -70,94 +101,105 @@ def make_crystal_base(seed=20260826):
         (0, 0, 0, 0),
     )
 
-    cd = ImageDraw.Draw(crystal)
+    d = ImageDraw.Draw(crystal)
 
-    # Main crystal silhouette
-    top = (32, 7)
-    left_top = (18, 23)
-    left_bottom = (22, 51)
-    bottom = (32, 59)
-    right_bottom = (43, 51)
-    right_top = (47, 23)
-
-    cd.polygon(
-        [
-            top,
-            right_top,
-            right_bottom,
-            bottom,
-            left_bottom,
-            left_top,
-        ],
-        fill=(35, 150, 245, 245),
+    top = (cx, int(cy - 210 * scale))
+    lt = (
+        int(cx - 125 * scale),
+        int(cy - 80 * scale),
+    )
+    lb = (
+        int(cx - 90 * scale),
+        int(cy + 170 * scale),
+    )
+    bottom = (
+        cx,
+        int(cy + 220 * scale),
+    )
+    rb = (
+        int(cx + 90 * scale),
+        int(cy + 170 * scale),
+    )
+    rt = (
+        int(cx + 125 * scale),
+        int(cy - 80 * scale),
     )
 
-    # Left facet
-    cd.polygon(
-        [
-            top,
-            left_top,
-            left_bottom,
-            bottom,
-        ],
-        fill=(18, 95, 180, 245),
+    ct = (
+        int(cx + 15 * scale),
+        int(cy - 85 * scale),
     )
 
-    # Bright center facet
-    cd.polygon(
-        [
-            top,
-            (34, 22),
-            (35, 49),
-            bottom,
-            (28, 49),
-            (29, 22),
-        ],
-        fill=(70, 200, 255, 245),
+    cl = (
+        int(cx + 25 * scale),
+        int(cy + 155 * scale),
     )
 
-    # Right facet
-    cd.polygon(
-        [
-            (34, 22),
-            right_top,
-            right_bottom,
-            bottom,
-            (35, 49),
-        ],
-        fill=(20, 115, 205, 245),
+    d.polygon(
+        [top, rt, rb, bottom, lb, lt],
+        fill=(20, 110, 225, 255),
     )
 
-    # Bright top
-    cd.polygon(
-        [
-            top,
-            left_top,
-            (34, 22),
-            right_top,
-        ],
-        fill=(115, 225, 255, 255),
+    d.polygon(
+        [top, lt, lb, bottom],
+        fill=(5, 35, 115, 255),
     )
 
-    # Sharp luminous edges
-    edge = (170, 245, 255, 255)
+    d.polygon(
+        [top, ct, cl, bottom],
+        fill=(80, 215, 255, 255),
+    )
 
-    cd.line(
-        [top, left_top, left_bottom, bottom],
+    d.polygon(
+        [ct, rt, rb, bottom, cl],
+        fill=(10, 85, 190, 255),
+    )
+
+    d.polygon(
+        [top, lt, ct, rt],
+        fill=(150, 240, 255, 255),
+    )
+
+    edge_width = max(
+        2,
+        int(3 * model.sharpness),
+    )
+
+    edge = (
+        220,
+        255,
+        255,
+        255,
+    )
+
+    d.line(
+        [top, lt, lb, bottom],
         fill=edge,
-        width=1,
+        width=edge_width,
     )
 
-    cd.line(
-        [top, right_top, right_bottom, bottom],
+    d.line(
+        [top, rt, rb, bottom],
         fill=edge,
-        width=1,
+        width=edge_width,
     )
 
-    cd.line(
-        [top, (34, 22), (35, 49), bottom],
-        fill=(220, 250, 255, 255),
-        width=1,
+    d.line(
+        [top, ct, cl, bottom],
+        fill=(245, 255, 255, 255),
+        width=edge_width,
+    )
+
+    d.line(
+        [lt, ct, lb],
+        fill=(100, 220, 255, 200),
+        width=edge_width,
+    )
+
+    d.line(
+        [rt, ct, rb],
+        fill=(130, 235, 255, 200),
+        width=edge_width,
     )
 
     img = Image.alpha_composite(
@@ -165,7 +207,7 @@ def make_crystal_base(seed=20260826):
         crystal,
     )
 
-    # Magical particles
+    # Energy particles
     particles = Image.new(
         "RGBA",
         (SIZE, SIZE),
@@ -174,19 +216,31 @@ def make_crystal_base(seed=20260826):
 
     pd = ImageDraw.Draw(particles)
 
-    for _ in range(35):
-        x = int(rng.integers(6, 58))
-        y = int(rng.integers(6, 58))
+    for _ in range(220):
+        x = rng.randint(10, SIZE - 10)
+        y = rng.randint(10, SIZE - 10)
 
-        # Keep particles away from the main crystal.
-        if 15 < x < 49 and 5 < y < 61:
+        if (
+            abs(x - cx) < 150
+            and abs(y - cy) < 230
+        ):
             continue
 
-        r = int(rng.integers(1, 2))
+        r = rng.choice([1, 2, 2, 3])
 
         pd.ellipse(
-            (x-r, y-r, x+r, y+r),
-            fill=(100, 210, 255, 170),
+            (
+                x-r,
+                y-r,
+                x+r,
+                y+r,
+            ),
+            fill=(
+                100,
+                rng.randint(180, 255),
+                255,
+                rng.randint(80, 220),
+            ),
         )
 
     img = Image.alpha_composite(
@@ -194,108 +248,13 @@ def make_crystal_base(seed=20260826):
         particles,
     )
 
-    return np.asarray(
-        img.convert("RGB"),
-        dtype=np.float32,
+    img.convert("RGB").save(
+        OUTPUT,
+        quality=98,
     )
 
-
-def main():
-    print("==============================")
-    print("     Crystal Image v0.8")
-    print("       64x64 Generator")
-    print("==============================")
-
-    if not CHECKPOINT.exists():
-        raise FileNotFoundError(
-            f"Missing checkpoint: {CHECKPOINT}"
-        )
-
-    if not VOCAB.exists():
-        raise FileNotFoundError(
-            f"Missing vocabulary: {VOCAB}"
-        )
-
-    model = CrystalImage.load(
-        CHECKPOINT
-    )
-
-    tokenizer = Tokenizer.load(
-        VOCAB
-    )
-
-    prompt = (
-        "a detailed glowing blue crystal "
-        "floating in darkness, sharp geometric "
-        "facets, luminous edges, magical energy, "
-        "bright core"
-    )
-
-    print(f"Prompt: {prompt}")
-
-    # Start with a structured crystal image,
-    # then allow the trained model to influence it.
-    base = make_crystal_base()
-
-    image = (
-        base / 127.5
-        - 1.0
-    ).reshape(-1)
-
-    text = tokenizer.text_vector(
-        prompt,
-        model.embedding,
-    )
-
-    print("Applying model refinement...")
-
-    for timestep in range(
-        999,
-        19,
-        -20,
-    ):
-        prediction = model.forward(
-            image[None, :],
-            text[None, :],
-            timestep,
-        )[0]
-
-        # Small refinement so the model does
-        # not immediately destroy the structure.
-        image -= prediction * 0.0005
-
-        if timestep % 100 == 0:
-            print(
-                f"timestep {timestep}"
-            )
-
-    image = np.clip(
-        image,
-        -1,
-        1,
-    )
-
-    image = (
-        (image + 1.0) * 127.5
-    ).astype(np.uint8)
-
-    image = image.reshape(
-        SIZE,
-        SIZE,
-        3,
-    )
-
-    Image.fromarray(
-        image,
-        "RGB",
-    ).save(OUTPUT)
-
-    print()
     print(
         f"Generated: {OUTPUT}"
-    )
-    print(
-        "Crystal image generation complete."
     )
 
 

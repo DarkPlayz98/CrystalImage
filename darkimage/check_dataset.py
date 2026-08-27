@@ -1,72 +1,56 @@
 from pathlib import Path
-
 from PIL import Image
 
-
-DATASET = Path("data/train")
-EXPECTED_SIZE = (128, 128)
+DATA = Path("data/train")
+SIZE = (512, 512)
 
 
 def main():
-    print("==============================")
-    print("     Crystal Image Dataset")
-    print("==============================")
-    print(f"Dataset: {DATASET}")
+    print("=" * 30)
+    print(" Crystal Image v1.0 Dataset")
+    print("=" * 30)
 
-    images = sorted(DATASET.glob("*.png"))
-
-    if not images:
-        raise RuntimeError(
-            "No images found in data/train"
-        )
+    if not DATA.exists():
+        raise RuntimeError("data/train does not exist")
 
     valid = 0
-    pairs = 0
+    images = sorted(DATA.glob("*.png"))
 
     for image_path in images:
-        caption_path = image_path.with_suffix(".txt")
+        text_path = image_path.with_suffix(".txt")
 
-        if not caption_path.exists():
+        if not text_path.exists():
             print(
                 f"Skipping {image_path.name}: "
-                f"missing {caption_path.name}"
+                "missing caption"
             )
             continue
 
-        with Image.open(image_path) as image:
-            size = image.size
-
-        if size != EXPECTED_SIZE:
+        try:
+            with Image.open(image_path) as img:
+                if img.size != SIZE:
+                    print(
+                        f"Skipping {image_path.name}: "
+                        f"size is {img.size}, "
+                        "expected 512x512"
+                    )
+                    continue
+        except Exception as error:
             print(
-                f"Skipping {image_path.name}: "
-                f"size is {size[0]}x{size[1]}, "
-                f"expected 128x128"
+                f"Skipping {image_path.name}: {error}"
             )
             continue
 
         valid += 1
-        pairs += 1
 
+    print(f"Dataset: {DATA}")
     print(f"Images: {len(images)}")
-    print(f"Valid training pairs: {pairs}")
-    print("Resolution: 128x128")
+    print(f"Valid training pairs: {valid}")
+    print("Resolution: 512x512")
 
-    if pairs:
-        example = next(
-            DATASET.glob("*.png")
-        )
-
-        caption = example.with_suffix(".txt")
-
-        print("Example:")
-        print(f"  {example.name}")
-        print(
-            f'  "{caption.read_text(encoding="utf-8").strip()}"'
-        )
-
-    if pairs == 0:
+    if valid == 0:
         raise RuntimeError(
-            "No valid 128x128 image/caption pairs found."
+            "No valid 512x512 pairs found."
         )
 
     print()
