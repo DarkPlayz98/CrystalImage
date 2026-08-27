@@ -11,7 +11,7 @@ DATA = Path("data/train")
 CHECKPOINTS = Path("checkpoints")
 
 SIZE = 64
-STEPS = 5000
+STEPS = 50000
 SAVE_EVERY = 1000
 
 

@@ -1,10 +1,13 @@
-name: Crystal Image v0.9
+name: Crystal Image v0.9 - Long Training
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: crystal-image-training
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -12,12 +15,13 @@ permissions:
 jobs:
   train:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -28,31 +32,53 @@ jobs:
           pip install -r requirements.txt
 
       - name: Create 128x128 dataset
-        run: python -m darkimage.create_crystal_dataset
+        run: |
+          rm -rf data/train
+          mkdir -p data/train
+          python -m darkimage.create_crystal_dataset
 
       - name: Check dataset
-        run: python -m darkimage.check_dataset
+        run: |
+          python -m darkimage.check_dataset
 
-      - name: Train Crystal Image v0.9
-        run: python -m darkimage.train
+      - name: Train Crystal Image - High Quality
+        run: |
+          python -m darkimage.train
+
+      - name: Show training outputs
+        if: always()
+        run: |
+          echo "=== Checkpoints ==="
+          find checkpoints -type f -print 2>/dev/null || true
+          echo "=== Generated images ==="
+          find . -maxdepth 2 -type f \( -name "*.png" -o -name "*.jpg" \) -print | head -50
 
       - name: Generate sample
-        run: python -m darkimage.generate
+        run: |
+          python -m darkimage.generate
 
-      - name: Upload generated image
+      - name: Upload generated sample
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: crystal-image-v0.9-sample
-          path: generated_crystal_v0_9.png
+          path: |
+            generated*.png
+            outputs/*.png
+          if-no-files-found: warn
 
-      - name: Upload checkpoint
+      - name: Upload trained model
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: crystal-image-v0.9-checkpoint
-          path: checkpoints/crystal_image_v0_9.npz
+          name: crystal-image-v0.9-model
+          path: checkpoints/*.npz
+          if-no-files-found: warn
 
       - name: Upload vocabulary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: crystal-image-v0.9-vocabulary
-          path: checkpoints/crystal_image_v0_9_vocab.json
+          path: checkpoints/*vocab*.json
+          if-no-files-found: warn
