@@ -1,166 +1,343 @@
 from pathlib import Path
 import random
+
 from PIL import Image, ImageDraw, ImageFilter
 
+
 OUT = Path("data/train")
-SIZE = 512
-COUNT = 150
 
-CAPTION = (
-    "a magnificent glowing crystal floating in deep darkness, "
-    "sharp geometric facets, luminous blue energy, brilliant core, "
-    "cinematic magical lighting, detailed reflections"
-)
-
-OUT.mkdir(parents=True, exist_ok=True)
+# The model trains at a compact resolution.
+# The source images are higher resolution.
+SOURCE_SIZE = 512
+COUNT = 120
 
 
-def make_crystal(index):
-    rng = random.Random(10000 + index)
+COLORS = [
+    (45, 155, 255),
+    (115, 70, 255),
+    (35, 230, 180),
+    (255, 70, 145),
+    (75, 215, 255),
+    (255, 180, 55),
+]
 
-    img = Image.new("RGB", (SIZE, SIZE), (2, 4, 12))
 
-    glow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    g = ImageDraw.Draw(glow)
+def create_image(seed):
+    rng = random.Random(seed)
 
-    cx = 256 + rng.randint(-20, 20)
-    cy = 270 + rng.randint(-10, 20)
-
-    for r in range(220, 10, -8):
-        strength = max(1, int(35 * (1 - r / 220)))
-        g.ellipse(
-            (cx-r, cy-r, cx+r, cy+r),
-            fill=(30, 130, 255, strength),
-        )
-
-    glow = glow.filter(ImageFilter.GaussianBlur(45))
-    img = Image.alpha_composite(img.convert("RGBA"), glow)
-
-    crystal = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    d = ImageDraw.Draw(crystal)
-
-    scale = rng.uniform(0.85, 1.12)
-
-    top = (cx, int(cy - 210 * scale))
-    lt = (int(cx - 125 * scale), int(cy - 80 * scale))
-    lb = (int(cx - 90 * scale), int(cy + 170 * scale))
-    bottom = (cx, int(cy + 220 * scale))
-    rb = (int(cx + 90 * scale), int(cy + 170 * scale))
-    rt = (int(cx + 125 * scale), int(cy - 80 * scale))
-
-    center_top = (
-        int(cx + 15 * scale),
-        int(cy - 85 * scale),
+    img = Image.new(
+        "RGB",
+        (SOURCE_SIZE, SOURCE_SIZE),
+        (2, 4, 12),
     )
 
-    center_low = (
-        int(cx + 25 * scale),
-        int(cy + 155 * scale),
-    )
+    color = rng.choice(COLORS)
 
-    d.polygon(
-        [top, rt, rb, bottom, lb, lt],
-        fill=(25, 115, 220, 255),
-    )
+    cx = SOURCE_SIZE // 2 + rng.randint(-35, 35)
+    cy = SOURCE_SIZE // 2 + rng.randint(-25, 25)
 
-    d.polygon(
-        [top, lt, lb, bottom],
-        fill=(8, 45, 125, 255),
-    )
+    width = rng.randint(105, 155)
+    height = rng.randint(220, 330)
 
-    d.polygon(
-        [top, center_top, center_low, bottom],
-        fill=(70, 205, 255, 255),
-    )
-
-    d.polygon(
-        [center_top, rt, rb, bottom, center_low],
-        fill=(15, 90, 190, 255),
-    )
-
-    d.polygon(
-        [top, lt, center_top, rt],
-        fill=(130, 235, 255, 255),
-    )
-
-    # Internal facets
-    d.line(
-        [lt, center_top, lb],
-        fill=(100, 220, 255, 200),
-        width=3,
-    )
-
-    d.line(
-        [rt, center_top, rb],
-        fill=(130, 235, 255, 200),
-        width=3,
-    )
-
-    d.line(
-        [top, lt, lb, bottom],
-        fill=(220, 255, 255, 255),
-        width=4,
-    )
-
-    d.line(
-        [top, rt, rb, bottom],
-        fill=(220, 255, 255, 255),
-        width=4,
-    )
-
-    d.line(
-        [top, center_top, center_low, bottom],
-        fill=(245, 255, 255, 255),
-        width=3,
-    )
-
-    img = Image.alpha_composite(img, crystal)
-
-    particles = Image.new(
+    # Background glow.
+    glow = Image.new(
         "RGBA",
-        (SIZE, SIZE),
+        img.size,
         (0, 0, 0, 0),
     )
-    p = ImageDraw.Draw(particles)
 
-    for _ in range(180):
-        x = rng.randint(10, SIZE - 10)
-        y = rng.randint(10, SIZE - 10)
+    gd = ImageDraw.Draw(glow)
 
-        if abs(x - cx) < 150 and abs(y - cy) < 230:
-            continue
-
-        r = rng.choice([1, 1, 2, 2, 3])
-        p.ellipse(
-            (x-r, y-r, x+r, y+r),
-            fill=(
-                100,
-                rng.randint(180, 255),
-                255,
-                rng.randint(80, 220),
+    for radius in range(220, 15, -10):
+        alpha = max(
+            2,
+            int(
+                42 *
+                (1.0 - radius / 220.0)
             ),
         )
 
-    img = Image.alpha_composite(img, particles)
+        gd.ellipse(
+            (
+                cx - radius,
+                cy - radius,
+                cx + radius,
+                cy + radius,
+            ),
+            fill=(
+                color[0],
+                color[1],
+                color[2],
+                alpha,
+            ),
+        )
+
+    glow = glow.filter(
+        ImageFilter.GaussianBlur(35)
+    )
+
+    img = Image.alpha_composite(
+        img.convert("RGBA"),
+        glow,
+    )
+
+    # Crystal layer.
+    crystal = Image.new(
+        "RGBA",
+        img.size,
+        (0, 0, 0, 0),
+    )
+
+    d = ImageDraw.Draw(crystal)
+
+    top = (cx, cy - height // 2)
+    left_top = (
+        cx - width // 2,
+        cy - height // 5,
+    )
+    left_bottom = (
+        cx - width // 2,
+        cy + height // 3,
+    )
+    bottom = (
+        cx,
+        cy + height // 2,
+    )
+    right_bottom = (
+        cx + width // 2,
+        cy + height // 3,
+    )
+    right_top = (
+        cx + width // 2,
+        cy - height // 5,
+    )
+
+    center_top = (
+        cx + rng.randint(-8, 8),
+        cy - height // 7,
+    )
+
+    center_bottom = (
+        cx + rng.randint(-8, 8),
+        cy + height // 3,
+    )
+
+    points = [
+        top,
+        right_top,
+        right_bottom,
+        bottom,
+        left_bottom,
+        left_top,
+    ]
+
+    # Main body.
+    d.polygon(
+        points,
+        fill=(
+            color[0],
+            color[1],
+            color[2],
+            245,
+        ),
+    )
+
+    # Left facet.
+    d.polygon(
+        [
+            top,
+            left_top,
+            left_bottom,
+            bottom,
+        ],
+        fill=(
+            max(color[0] - 25, 0),
+            max(color[1] - 55, 0),
+            max(color[2] - 20, 0),
+            250,
+        ),
+    )
+
+    # Center facet.
+    d.polygon(
+        [
+            top,
+            center_top,
+            center_bottom,
+            bottom,
+        ],
+        fill=(
+            min(color[0] + 65, 255),
+            min(color[1] + 65, 255),
+            min(color[2] + 65, 255),
+            255,
+        ),
+    )
+
+    # Right facet.
+    d.polygon(
+        [
+            center_top,
+            right_top,
+            right_bottom,
+            bottom,
+            center_bottom,
+        ],
+        fill=(
+            max(color[0] - 15, 0),
+            max(color[1] - 30, 0),
+            max(color[2] - 15, 0),
+            245,
+        ),
+    )
+
+    # Top facet.
+    d.polygon(
+        [
+            top,
+            left_top,
+            center_top,
+            right_top,
+        ],
+        fill=(
+            min(color[0] + 80, 255),
+            min(color[1] + 80, 255),
+            min(color[2] + 80, 255),
+            255,
+        ),
+    )
+
+    # Interior edges.
+    edge = (
+        210,
+        250,
+        255,
+        230,
+    )
+
+    d.line(
+        [top, left_top, left_bottom, bottom],
+        fill=edge,
+        width=2,
+    )
+
+    d.line(
+        [top, right_top, right_bottom, bottom],
+        fill=edge,
+        width=2,
+    )
+
+    d.line(
+        [top, center_top, center_bottom, bottom],
+        fill=(245, 255, 255, 245),
+        width=2,
+    )
+
+    # Energy core.
+    core_width = rng.randint(7, 13)
+
+    d.ellipse(
+        (
+            cx - core_width,
+            cy - height // 6,
+            cx + core_width,
+            cy + height // 6,
+        ),
+        fill=(255, 255, 255, 90),
+    )
+
+    img = Image.alpha_composite(
+        img,
+        crystal,
+    )
+
+    # Floating energy particles.
+    particles = Image.new(
+        "RGBA",
+        img.size,
+        (0, 0, 0, 0),
+    )
+
+    pd = ImageDraw.Draw(particles)
+
+    for _ in range(100):
+        x = rng.randint(8, SOURCE_SIZE - 8)
+        y = rng.randint(8, SOURCE_SIZE - 8)
+
+        if (
+            abs(x - cx) < width
+            and abs(y - cy) < height
+        ):
+            continue
+
+        radius = rng.choice(
+            [1, 1, 2, 2, 3]
+        )
+
+        pd.ellipse(
+            (
+                x - radius,
+                y - radius,
+                x + radius,
+                y + radius,
+            ),
+            fill=(
+                min(color[0] + 70, 255),
+                min(color[1] + 70, 255),
+                255,
+                rng.randint(80, 210),
+            ),
+        )
+
+    img = Image.alpha_composite(
+        img,
+        particles,
+    )
 
     return img.convert("RGB")
 
 
-for i in range(1, COUNT + 1):
-    name = f"crystal_{i:04d}"
-
-    image = make_crystal(i)
-    image.save(
-        OUT / f"{name}.png",
-        quality=95,
+def main():
+    OUT.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    (OUT / f"{name}.txt").write_text(
-        CAPTION,
-        encoding="utf-8",
+    for path in OUT.glob("crystal_*.png"):
+        path.unlink()
+
+    for path in OUT.glob("crystal_*.txt"):
+        path.unlink()
+
+    caption = (
+        "a magnificent glowing crystal "
+        "floating in darkness, sharp crystalline "
+        "facets, luminous edges, magical blue energy, "
+        "brilliant inner core, cinematic lighting, "
+        "detailed reflections"
     )
 
-print(
-    f"Created {COUNT} "
-    f"{SIZE}x{SIZE} training pairs."
-)
+    for i in range(1, COUNT + 1):
+        image = create_image(
+            12000 + i
+        )
+
+        image.save(
+            OUT / f"crystal_{i:04d}.png",
+            quality=95,
+        )
+
+        (
+            OUT / f"crystal_{i:04d}.txt"
+        ).write_text(
+            caption,
+            encoding="utf-8",
+        )
+
+    print(
+        f"Created {COUNT} training pairs."
+    )
+
+
+if __name__ == "__main__":
+    main()

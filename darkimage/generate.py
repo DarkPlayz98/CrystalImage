@@ -1,260 +1,172 @@
 from pathlib import Path
-import random
+import re
 
-from PIL import Image, ImageDraw, ImageFilter
-
-from .model import CrystalImage
+import numpy as np
+import torch
+from PIL import Image
 
 
 CHECKPOINT = Path(
-    "checkpoints/crystal_image_v1_0.npz"
+    "checkpoints/crystal_image_v1_2.pt"
 )
 
 OUTPUT = Path(
-    "generated_crystal_v1_0.png"
+    "generated_crystal_v1_2.png"
 )
 
-SIZE = 512
+LATENT_SIZE = 96
+OUTPUT_SIZE = 1536
+
+
+def tokenize(text):
+    return re.findall(
+        r"[a-z0-9']+",
+        text.lower(),
+    )
 
 
 def main():
-    print("=" * 40)
-    print("       Crystal Image v1.0")
-    print("       512x512 Generator")
-    print("=" * 40)
+    from .model import CrystalImage
 
-    model = CrystalImage.load(
-        CHECKPOINT
-    )
-
-    rng = random.Random(5122026)
-
-    cx = int(
-        SIZE * model.center_x
-    )
-    cy = int(
-        SIZE * model.center_y
-    )
-
-    scale = model.scale
-
-    img = Image.new(
-        "RGB",
-        (SIZE, SIZE),
-        (2, 4, 12),
-    )
-
-    # Atmospheric glow
-    glow = Image.new(
-        "RGBA",
-        (SIZE, SIZE),
-        (0, 0, 0, 0),
-    )
-
-    gd = ImageDraw.Draw(glow)
-
-    max_radius = int(
-        220 * model.glow
-    )
-
-    for r in range(
-        max_radius,
-        10,
-        -8,
-    ):
-        alpha = max(
-            1,
-            int(
-                30 * (
-                    1 - r / max_radius
-                )
-            ),
+    if not CHECKPOINT.exists():
+        raise FileNotFoundError(
+            f"Missing checkpoint: {CHECKPOINT}"
         )
 
-        gd.ellipse(
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+
+    checkpoint = torch.load(
+        CHECKPOINT,
+        map_location=device,
+    )
+
+    vocab = checkpoint["vocab"]
+
+    model = CrystalImage(
+        vocab_size=len(vocab)
+    ).to(device)
+
+    model.load_state_dict(
+        checkpoint["model"]
+    )
+
+    model.eval()
+
+    prompt = (
+        "a magnificent glowing crystal "
+        "floating in darkness, sharp crystalline "
+        "facets, luminous edges, magical blue energy, "
+        "brilliant inner core, cinematic lighting, "
+        "detailed reflections"
+    )
+
+    words = tokenize(prompt)
+
+    ids = [
+        vocab.get(
+            word,
+            vocab["<unk>"],
+        )
+        for word in words
+    ]
+
+    tokens = torch.tensor(
+        [ids],
+        dtype=torch.long,
+        device=device,
+    )
+
+    print(
+        "Generating 96x96 latent image..."
+    )
+
+    with torch.no_grad():
+        # Start from noise.
+        image = torch.randn(
             (
-                cx-r,
-                cy-r,
-                cx+r,
-                cy+r,
+                1,
+                3,
+                LATENT_SIZE,
+                LATENT_SIZE,
             ),
-            fill=(
-                25,
-                130,
-                255,
-                alpha,
-            ),
+            device=device,
         )
 
-    glow = glow.filter(
-        ImageFilter.GaussianBlur(45)
-    )
-
-    img = Image.alpha_composite(
-        img.convert("RGBA"),
-        glow,
-    )
-
-    crystal = Image.new(
-        "RGBA",
-        (SIZE, SIZE),
-        (0, 0, 0, 0),
-    )
-
-    d = ImageDraw.Draw(crystal)
-
-    top = (cx, int(cy - 210 * scale))
-    lt = (
-        int(cx - 125 * scale),
-        int(cy - 80 * scale),
-    )
-    lb = (
-        int(cx - 90 * scale),
-        int(cy + 170 * scale),
-    )
-    bottom = (
-        cx,
-        int(cy + 220 * scale),
-    )
-    rb = (
-        int(cx + 90 * scale),
-        int(cy + 170 * scale),
-    )
-    rt = (
-        int(cx + 125 * scale),
-        int(cy - 80 * scale),
-    )
-
-    ct = (
-        int(cx + 15 * scale),
-        int(cy - 85 * scale),
-    )
-
-    cl = (
-        int(cx + 25 * scale),
-        int(cy + 155 * scale),
-    )
-
-    d.polygon(
-        [top, rt, rb, bottom, lb, lt],
-        fill=(20, 110, 225, 255),
-    )
-
-    d.polygon(
-        [top, lt, lb, bottom],
-        fill=(5, 35, 115, 255),
-    )
-
-    d.polygon(
-        [top, ct, cl, bottom],
-        fill=(80, 215, 255, 255),
-    )
-
-    d.polygon(
-        [ct, rt, rb, bottom, cl],
-        fill=(10, 85, 190, 255),
-    )
-
-    d.polygon(
-        [top, lt, ct, rt],
-        fill=(150, 240, 255, 255),
-    )
-
-    edge_width = max(
-        2,
-        int(3 * model.sharpness),
-    )
-
-    edge = (
-        220,
-        255,
-        255,
-        255,
-    )
-
-    d.line(
-        [top, lt, lb, bottom],
-        fill=edge,
-        width=edge_width,
-    )
-
-    d.line(
-        [top, rt, rb, bottom],
-        fill=edge,
-        width=edge_width,
-    )
-
-    d.line(
-        [top, ct, cl, bottom],
-        fill=(245, 255, 255, 255),
-        width=edge_width,
-    )
-
-    d.line(
-        [lt, ct, lb],
-        fill=(100, 220, 255, 200),
-        width=edge_width,
-    )
-
-    d.line(
-        [rt, ct, rb],
-        fill=(130, 235, 255, 200),
-        width=edge_width,
-    )
-
-    img = Image.alpha_composite(
-        img,
-        crystal,
-    )
-
-    # Energy particles
-    particles = Image.new(
-        "RGBA",
-        (SIZE, SIZE),
-        (0, 0, 0, 0),
-    )
-
-    pd = ImageDraw.Draw(particles)
-
-    for _ in range(220):
-        x = rng.randint(10, SIZE - 10)
-        y = rng.randint(10, SIZE - 10)
-
-        if (
-            abs(x - cx) < 150
-            and abs(y - cy) < 230
+        # Iterative denoising.
+        for step in range(
+            60,
+            0,
+            -1,
         ):
-            continue
+            timestep = torch.tensor(
+                [[step / 60.0]],
+                dtype=torch.float32,
+                device=device,
+            )
 
-        r = rng.choice([1, 2, 2, 3])
+            prediction = model(
+                image,
+                tokens,
+                timestep,
+            )
 
-        pd.ellipse(
-            (
-                x-r,
-                y-r,
-                x+r,
-                y+r,
-            ),
-            fill=(
-                100,
-                rng.randint(180, 255),
-                255,
-                rng.randint(80, 220),
-            ),
-        )
+            strength = (
+                0.04
+                if step > 20
+                else 0.02
+            )
 
-    img = Image.alpha_composite(
-        img,
-        particles,
+            image = (
+                image * (1.0 - strength)
+                +
+                prediction * strength
+            )
+
+    image = image[
+        0
+    ].permute(
+        1,
+        2,
+        0,
     )
 
-    img.convert("RGB").save(
+    image = (
+        image.clamp(-1, 1)
+        + 1
+    ) * 127.5
+
+    image = image.byte().cpu().numpy()
+
+    small = Image.fromarray(
+        image,
+        "RGB",
+    )
+
+    # High-quality 1536 reconstruction.
+    large = small.resize(
+        (
+            OUTPUT_SIZE,
+            OUTPUT_SIZE,
+        ),
+        Image.Resampling.LANCZOS,
+    )
+
+    large.save(
         OUTPUT,
         quality=98,
     )
 
     print(
         f"Generated: {OUTPUT}"
+    )
+
+    print(
+        f"Resolution: "
+        f"{OUTPUT_SIZE}x{OUTPUT_SIZE}"
     )
 
 

@@ -1,72 +1,171 @@
-from pathlib import Path
-import numpy as np
+import torch
+from torch import nn
 
 
-class CrystalImage:
-    def __init__(self):
-        self.version = "1.0"
-        self.center_x = 0.5
-        self.center_y = 0.53
-        self.scale = 0.95
-        self.glow = 1.0
-        self.sharpness = 1.0
-        self.samples = 0
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
 
-    def update(
+        self.block = nn.Sequential(
+            nn.Conv2d(
+                channels,
+                channels,
+                3,
+                padding=1,
+            ),
+            nn.GroupNorm(
+                8,
+                channels,
+            ),
+            nn.SiLU(),
+            nn.Conv2d(
+                channels,
+                channels,
+                3,
+                padding=1,
+            ),
+            nn.GroupNorm(
+                8,
+                channels,
+            ),
+        )
+
+    def forward(self, x):
+        return torch.relu(
+            x + self.block(x)
+        )
+
+
+class CrystalImage(nn.Module):
+    """
+    Crystal Image v1.2.
+
+    Custom randomly initialized text-conditioned
+    denoising network.
+
+    Training resolution:
+        96x96
+
+    Final output:
+        1536x1536
+    """
+
+    def __init__(
         self,
-        center_x,
-        center_y,
-        scale,
+        vocab_size,
+        text_dim=64,
+        channels=64,
     ):
-        n = self.samples
+        super().__init__()
 
-        self.center_x = (
-            self.center_x * n + center_x
-        ) / (n + 1)
+        self.text_dim = text_dim
 
-        self.center_y = (
-            self.center_y * n + center_y
-        ) / (n + 1)
-
-        self.scale = (
-            self.scale * n + scale
-        ) / (n + 1)
-
-        self.samples += 1
-
-    def save(self, path):
-        Path(path).parent.mkdir(
-            parents=True,
-            exist_ok=True,
+        self.embedding = nn.Embedding(
+            vocab_size,
+            text_dim,
         )
 
-        np.savez_compressed(
-            path,
-            version=self.version,
-            center_x=self.center_x,
-            center_y=self.center_y,
-            scale=self.scale,
-            glow=self.glow,
-            sharpness=self.sharpness,
-            samples=self.samples,
+        self.text_projection = nn.Sequential(
+            nn.Linear(
+                text_dim,
+                channels,
+            ),
+            nn.SiLU(),
+            nn.Linear(
+                channels,
+                channels,
+            ),
         )
 
-    @classmethod
-    def load(cls, path):
-        data = np.load(
-            path,
-            allow_pickle=True,
+        self.time_projection = nn.Sequential(
+            nn.Linear(
+                1,
+                channels,
+            ),
+            nn.SiLU(),
+            nn.Linear(
+                channels,
+                channels,
+            ),
         )
 
-        model = cls()
-
-        model.center_x = float(data["center_x"])
-        model.center_y = float(data["center_y"])
-        model.scale = float(data["scale"])
-        model.glow = float(data["glow"])
-        model.sharpness = float(
-            data["sharpness"]
+        self.input = nn.Conv2d(
+            3,
+            channels,
+            3,
+            padding=1,
         )
-        model.samples = int(data["samples"])
 
-        return model
+        self.res1 = ResidualBlock(
+            channels
+        )
+
+        self.res2 = ResidualBlock(
+            channels
+        )
+
+        self.res3 = ResidualBlock(
+            channels
+        )
+
+        self.output = nn.Conv2d(
+            channels,
+            3,
+            3,
+            padding=1,
+        )
+
+    def encode_text(
+        self,
+        token_ids,
+    ):
+        x = self.embedding(
+            token_ids
+        )
+
+        return x.mean(
+            dim=1
+        )
+
+    def forward(
+        self,
+        noisy,
+        token_ids,
+        timestep,
+    ):
+        text = self.encode_text(
+            token_ids
+        )
+
+        text = self.text_projection(
+            text
+        )
+
+        time = timestep.reshape(
+            -1,
+            1,
+        )
+
+        time = self.time_projection(
+            time
+        )
+
+        condition = (
+            text + time
+        ).unsqueeze(
+            -1
+        ).unsqueeze(
+            -1
+        )
+
+        x = self.input(
+            noisy
+        )
+
+        x = x + condition
+
+        x = self.res1(x)
+        x = self.res2(x)
+        x = self.res3(x)
+
+        return self.output(x)

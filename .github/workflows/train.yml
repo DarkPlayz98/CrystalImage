@@ -1,13 +1,14 @@
-name: Crystal Image v1.0 512x512
+name: Crystal Image v1.2
 
 on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 concurrency:
-  group: crystal-image-v1-training
+  group: crystal-image-v1-2
   cancel-in-progress: true
 
 permissions:
@@ -16,13 +17,14 @@ permissions:
 jobs:
   train:
     runs-on: ubuntu-latest
+
     timeout-minutes: 360
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -32,7 +34,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create 512x512 dataset
+      - name: Create training dataset
         run: |
           rm -rf data/train
           mkdir -p data/train
@@ -42,24 +44,31 @@ jobs:
         run: |
           python -m darkimage.check_dataset
 
-      - name: Train Crystal Image v1.0
+      - name: Train Crystal Image v1.2
         run: |
           python -m darkimage.train
 
-      - name: Generate crystal
+      - name: Generate 1536x1536 sample
         run: |
           python -m darkimage.generate
 
-      - name: Upload generated crystal
+      - name: Upload generated image
         uses: actions/upload-artifact@v4
         with:
-          name: Crystal-Image-v1.0-512x512
-          path: generated_crystal_v1_0.png
+          name: Crystal-Image-v1.2-1536x1536
+          path: generated_crystal_v1_2.png
           if-no-files-found: error
 
-      - name: Upload model
+      - name: Upload model checkpoint
         uses: actions/upload-artifact@v4
         with:
-          name: Crystal-Image-v1.0-Model
-          path: checkpoints/crystal_image_v1_0.npz
+          name: Crystal-Image-v1.2-Model
+          path: checkpoints/crystal_image_v1_2.pt
+          if-no-files-found: error
+
+      - name: Upload vocabulary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crystal-Image-v1.2-Vocabulary
+          path: checkpoints/crystal_image_v1_2_vocab.json
           if-no-files-found: error
