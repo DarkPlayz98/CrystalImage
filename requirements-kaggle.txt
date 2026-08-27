@@ -1,3 +1,5 @@
-numpy
-Pillow
 torch
+numpy
+sentencepiece
+datasets
+tqdm
