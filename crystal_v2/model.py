@@ -9,69 +9,42 @@ class ResBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
 
-        self.norm1 = nn.GroupNorm(
-            8,
-            channels,
-        )
-
+        self.norm1 = nn.GroupNorm(8, channels)
         self.conv1 = nn.Conv2d(
-            channels,
-            channels,
-            3,
-            padding=1,
+            channels, channels, 3, padding=1
         )
 
-        self.norm2 = nn.GroupNorm(
-            8,
-            channels,
-        )
-
+        self.norm2 = nn.GroupNorm(8, channels)
         self.conv2 = nn.Conv2d(
-            channels,
-            channels,
-            3,
-            padding=1,
+            channels, channels, 3, padding=1
         )
 
     def forward(self, x):
         h = self.conv1(
-            F.silu(
-                self.norm1(x)
-            )
+            F.silu(self.norm1(x))
         )
 
         h = self.conv2(
-            F.silu(
-                self.norm2(h)
-            )
+            F.silu(self.norm2(h))
         )
 
         return x + h
 
 
 class TextEncoder(nn.Module):
-    def __init__(
-        self,
-        vocab_size,
-        embed_dim=256,
-    ):
+    def __init__(self, vocab_size, embed_dim=256):
         super().__init__()
 
         self.embedding = nn.Embedding(
             vocab_size,
             embed_dim,
+            padding_idx=0,
         )
 
         self.proj = nn.Sequential(
-            nn.Linear(
-                embed_dim,
-                embed_dim,
-            ),
+            nn.Linear(embed_dim, embed_dim),
             nn.SiLU(),
-            nn.Linear(
-                embed_dim,
-                embed_dim,
-            ),
+            nn.Linear(embed_dim, embed_dim),
         )
 
     def forward(self, tokens):
@@ -85,63 +58,43 @@ class TextEncoder(nn.Module):
 
         denom = mask.sum(
             dim=1
-        ).clamp_min(1)
+        ).clamp_min(1.0)
 
-        x = x.sum(
-            dim=1
-        ) / denom
+        x = x.sum(dim=1) / denom
 
         return self.proj(x)
 
 
 class AutoEncoder(nn.Module):
-    """
-    512x512 image -> 64x64 latent -> 512x512 image
-    """
-
     def __init__(self):
         super().__init__()
 
         self.encoder = nn.Sequential(
             nn.Conv2d(
-                3,
-                64,
-                4,
+                3, 64, 4,
                 stride=2,
                 padding=1,
             ),
             nn.SiLU(),
 
             nn.Conv2d(
-                64,
-                128,
-                4,
+                64, 128, 4,
                 stride=2,
                 padding=1,
             ),
-            nn.GroupNorm(
-                8,
-                128,
-            ),
+            nn.GroupNorm(8, 128),
             nn.SiLU(),
 
             nn.Conv2d(
-                128,
-                256,
-                4,
+                128, 256, 4,
                 stride=2,
                 padding=1,
             ),
-            nn.GroupNorm(
-                8,
-                256,
-            ),
+            nn.GroupNorm(8, 256),
             nn.SiLU(),
 
             nn.Conv2d(
-                256,
-                4,
-                4,
+                256, 4, 4,
                 stride=2,
                 padding=1,
             ),
@@ -149,48 +102,31 @@ class AutoEncoder(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(
-                4,
-                256,
-                4,
+                4, 256, 4,
                 stride=2,
                 padding=1,
             ),
-            nn.GroupNorm(
-                8,
-                256,
-            ),
+            nn.GroupNorm(8, 256),
             nn.SiLU(),
 
             nn.ConvTranspose2d(
-                256,
-                128,
-                4,
+                256, 128, 4,
                 stride=2,
                 padding=1,
             ),
-            nn.GroupNorm(
-                8,
-                128,
-            ),
+            nn.GroupNorm(8, 128),
             nn.SiLU(),
 
             nn.ConvTranspose2d(
-                128,
-                64,
-                4,
+                128, 64, 4,
                 stride=2,
                 padding=1,
             ),
-            nn.GroupNorm(
-                8,
-                64,
-            ),
+            nn.GroupNorm(8, 64),
             nn.SiLU(),
 
             nn.ConvTranspose2d(
-                64,
-                3,
-                4,
+                64, 3, 4,
                 stride=2,
                 padding=1,
             ),
@@ -204,29 +140,21 @@ class AutoEncoder(nn.Module):
         return self.decoder(z)
 
     def forward(self, x):
-        z = self.encode(x)
-        return self.decode(z)
+        return self.decode(
+            self.encode(x)
+        )
 
 
 class TimeEmbedding(nn.Module):
-    def __init__(
-        self,
-        dim,
-    ):
+    def __init__(self, dim):
         super().__init__()
 
         self.dim = dim
 
         self.proj = nn.Sequential(
-            nn.Linear(
-                dim,
-                dim,
-            ),
+            nn.Linear(dim, dim),
             nn.SiLU(),
-            nn.Linear(
-                dim,
-                dim,
-            ),
+            nn.Linear(dim, dim),
         )
 
     def forward(self, t):
@@ -236,6 +164,7 @@ class TimeEmbedding(nn.Module):
             torch.arange(
                 half,
                 device=t.device,
+                dtype=t.dtype,
             )
             * (
                 -math.log(10000.0)
@@ -260,16 +189,6 @@ class TimeEmbedding(nn.Module):
 
 
 class DiffusionUNet(nn.Module):
-    """
-    Compact latent-space diffusion network.
-
-    Input:
-        4x64x64 latent
-
-    Conditioning:
-        text embedding + timestep
-    """
-
     def __init__(
         self,
         vocab_size,
@@ -282,9 +201,7 @@ class DiffusionUNet(nn.Module):
             embed_dim=256,
         )
 
-        self.time = TimeEmbedding(
-            256
-        )
+        self.time = TimeEmbedding(256)
 
         self.input = nn.Conv2d(
             4,
@@ -293,9 +210,7 @@ class DiffusionUNet(nn.Module):
             padding=1,
         )
 
-        self.block1 = ResBlock(
-            base
-        )
+        self.block1 = ResBlock(base)
 
         self.down = nn.Conv2d(
             base,
@@ -321,9 +236,7 @@ class DiffusionUNet(nn.Module):
             padding=1,
         )
 
-        self.block3 = ResBlock(
-            base
-        )
+        self.block3 = ResBlock(base)
 
         self.output = nn.Conv2d(
             base,
@@ -344,14 +257,10 @@ class DiffusionUNet(nn.Module):
         timestep,
     ):
         text = self.text(tokens)
-
         time = self.time(timestep)
 
         conditioning = torch.cat(
-            [
-                text,
-                time,
-            ],
+            [text, time],
             dim=1,
         )
 
@@ -362,35 +271,50 @@ class DiffusionUNet(nn.Module):
         c = c[:, :, None, None]
 
         h1 = self.input(x)
-
         h1 = self.block1(h1)
 
         h2 = self.down(h1)
-
         h2 = h2 + c
-
         h2 = self.block2(h2)
-
         h2 = self.mid(h2)
 
         h = self.up(h2)
-
         h = h + h1
-
         h = self.block3(h)
 
         return self.output(h)
 
 
 class CrystalImageV2(nn.Module):
-    def __init__(
-        self,
-        vocab_size,
-    ):
+    def __init__(self, vocab_size):
         super().__init__()
 
         self.autoencoder = AutoEncoder()
 
         self.diffusion = DiffusionUNet(
             vocab_size
+        )
+
+    def forward(self, x):
+        """
+        Stage-1 autoencoder forward pass.
+        """
+        return self.autoencoder(x)
+
+    def encode(self, x):
+        return self.autoencoder.encode(x)
+
+    def decode(self, z):
+        return self.autoencoder.decode(z)
+
+    def predict_noise(
+        self,
+        latent,
+        tokens,
+        timestep,
+    ):
+        return self.diffusion(
+            latent,
+            tokens,
+            timestep,
         )
